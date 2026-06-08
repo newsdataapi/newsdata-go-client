@@ -8,6 +8,7 @@
 [![CI](https://img.shields.io/github/actions/workflow/status/newsdataapi/newsdata-go-client/ci.yml?branch=main&logo=github&label=CI)](https://github.com/newsdataapi/newsdata-go-client/actions/workflows/ci.yml)
 [![Go](https://img.shields.io/badge/go-%3E%3D1.18-00ADD8?logo=go)](https://go.dev)
 [![License](https://img.shields.io/badge/license-MIT-blue)](./LICENSE)
+[![OpenAPI](https://img.shields.io/badge/OpenAPI-3.1-85EA2D)](https://newsdata.io/openapi.json)
 
 </div>
 
