@@ -45,6 +45,38 @@ func TestSuccessfulRequest(t *testing.T) {
 	}
 }
 
+// Market results carry both `symbol` and `market_id`; the two are separate
+// response fields and both decode onto Article.
+func TestMarketArticleDecodesSymbolAndMarketID(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(successBody(
+			`[{"article_id":"m1","symbol":["AAPL","MSFT"],"market_id":["NASDAQ:AAPL","NASDAQ:MSFT"]}]`)))
+	}))
+	defer srv.Close()
+
+	c, err := NewClient("key", WithBaseURL(srv.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := c.Market(context.Background(), Params{"market_id": "AAPL"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	articles, err := resp.Articles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(articles) != 1 {
+		t.Fatalf("expected 1 article, got %d", len(articles))
+	}
+	if got := strings.Join(articles[0].Symbol, ","); got != "AAPL,MSFT" {
+		t.Errorf("Symbol = %q, want \"AAPL,MSFT\"", got)
+	}
+	if got := strings.Join(articles[0].MarketID, ","); got != "NASDAQ:AAPL,NASDAQ:MSFT" {
+		t.Errorf("MarketID = %q, want \"NASDAQ:AAPL,NASDAQ:MSFT\"", got)
+	}
+}
+
 func TestAuthError401(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(401)
