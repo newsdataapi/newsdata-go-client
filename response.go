@@ -75,4 +75,6 @@ type Article struct {
 	Sentiment      string         `json:"sentiment,omitempty"`
 	SentimentStats map[string]any `json:"sentiment_stats,omitempty"`
 	DataType       string         `json:"datatype,omitempty"`
+	Symbol         []string       `json:"symbol,omitempty"`
+	MarketID       []string       `json:"market_id,omitempty"`
 }
