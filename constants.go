@@ -1,9 +1,27 @@
 package newsdataapi
 
-import "time"
+import (
+	"net/http"
+	"time"
+)
 
 // API host.
 const baseURL = "https://newsdata.io/api/1/"
+
+// Real-time WebSocket defaults (see WebSocket / NewWebSocket).
+const (
+	wsBaseURL = "wss://ws.newsdata.io/ws/event"
+	// wsNewsType is the feed a registered query matches against.
+	wsNewsType = "latest"
+	// wsPolicyViolation is the close code the server uses for a permanent
+	// rejection (bad key, unknown registration_id, quota exhausted, ...).
+	wsPolicyViolation          = 1008
+	defaultWSReconnectDelay    = time.Second
+	defaultWSReconnectDelayMax = 30 * time.Second
+	defaultWSHandshakeTimeout  = 10 * time.Second
+	defaultWSPingInterval      = 20 * time.Second
+	defaultWSPongTimeout       = 20 * time.Second
+)
 
 // HTTP defaults.
 const (
@@ -23,15 +41,29 @@ const (
 // Endpoint key → path appended to baseURL. The key is also used to look up the
 // allowed-parameter set in `filters`.
 var endpoints = map[string]string{
-	"latest":       "latest",
-	"crypto":       "crypto",
-	"archive":      "archive",
-	"sources":      "sources",
-	"market":       "market",
-	"count":        "count",
-	"crypto_count": "crypto/count",
-	"market_count": "market/count",
+	"latest":             "latest",
+	"crypto":             "crypto",
+	"archive":            "archive",
+	"sources":            "sources",
+	"market":             "market",
+	"count":              "count",
+	"crypto_count":       "crypto/count",
+	"market_count":       "market/count",
+	"websocket_register": "websocket/register",
+	"websocket_fetch":    "websocket/fetch",
+	"websocket_delete":   "websocket/delete",
 }
+
+// HTTP method per endpoint; anything absent is a GET.
+var endpointMethods = map[string]string{
+	"websocket_register": http.MethodPost,
+	"websocket_delete":   http.MethodDelete,
+}
+
+// The websocket management endpoints answer with a success envelope that may
+// carry no `results` field at all, so they are exempt from the results-present
+// check `do` applies to the news endpoints.
+var resultsOptional = setOf("websocket_register", "websocket_fetch", "websocket_delete")
 
 // Endpoints that require both from_date and to_date.
 var requiresDateRange = setOf("count", "crypto_count", "market_count")
@@ -110,6 +142,19 @@ var filters = map[string]map[string]bool{
 		"market_id", "prioritydomain", "page", "sentiment", "removeduplicate", "size",
 		"sort", "tag", "interval", "creator", "datatype", "sentiment_score",
 	),
+	// Real-time query registration. No date/paging filters — a registered
+	// query matches news as it is published. `news_type` is set by
+	// WebSocketRegister, not by the caller.
+	"websocket_register": setOf(
+		"q", "qintitle", "qinmeta", "country", "excludecountry", "category",
+		"excludecategory", "language", "excludelanguage", "domain", "domainurl",
+		"excludedomain", "prioritydomain", "timezone", "full_content", "image",
+		"video", "removeduplicate", "tag", "sentiment", "sentiment_score",
+		"region", "organization", "creator", "datatype", "excludefield",
+		"news_type",
+	),
+	"websocket_fetch":  setOf(),
+	"websocket_delete": setOf("registration_id"),
 }
 
 func setOf(items ...string) map[string]bool {

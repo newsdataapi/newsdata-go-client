@@ -49,6 +49,41 @@ func (c *Client) MarketCount(ctx context.Context, params Params) (*Response, err
 	return c.do(ctx, EndpointMarketCount, params)
 }
 
+// WebSocketRegister registers a real-time query. POST /1/websocket/register.
+//
+// params takes the familiar filter names (q, country, language, domain, ...);
+// no date or paging filters apply, since a registered query matches news as it
+// is published. The new query's registration_id is in the response results —
+// pass it to WebSocket.Stream to receive the matching articles.
+//
+// Registering an identical query twice answers HTTP 409; the existing id is in
+// the NewsdataAPIError's ResponseBody.
+func (c *Client) WebSocketRegister(ctx context.Context, params Params) (*Response, error) {
+	p := make(Params, len(params)+1)
+	for k, v := range params {
+		p[k] = v
+	}
+	p["news_type"] = wsNewsType
+	return c.do(ctx, EndpointWebSocketRegister, p)
+}
+
+// WebSocketFetch lists the account's registered real-time queries.
+// GET /1/websocket/fetch.
+func (c *Client) WebSocketFetch(ctx context.Context) (*Response, error) {
+	return c.do(ctx, EndpointWebSocketFetch, nil)
+}
+
+// WebSocketDelete removes the registered real-time query identified by
+// registrationID. DELETE /1/websocket/delete.
+func (c *Client) WebSocketDelete(ctx context.Context, registrationID string) (*Response, error) {
+	if registrationID == "" {
+		return nil, &NewsdataValidationError{
+			Param: "registration_id", Message: "must be a non-empty string",
+		}
+	}
+	return c.do(ctx, EndpointWebSocketDelete, Params{"registration_id": registrationID})
+}
+
 // ScrollAll follows nextPage cursors and returns one merged Response, capped
 // at maxResults articles (0 = no cap, follow until exhaustion).
 //

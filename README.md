@@ -76,6 +76,9 @@ func main() {
 | `client.Count(ctx, params)` | `/1/count` | Aggregate counts (requires `from_date`, `to_date`) |
 | `client.CryptoCount(ctx, params)` | `/1/crypto/count` | Aggregate crypto counts |
 | `client.MarketCount(ctx, params)` | `/1/market/count` | Aggregate market counts |
+| `client.WebSocketRegister(ctx, params)` | `/1/websocket/register` | Register a real-time query |
+| `client.WebSocketFetch(ctx)` | `/1/websocket/fetch` | List registered queries |
+| `client.WebSocketDelete(ctx, id)` | `/1/websocket/delete` | Delete a registered query |
 
 Every value in `Params` may be a `string`, a `[]string` (sent comma-joined),
 a `bool`, an `int`, a `float64`, or `*bool` / `*float64` if you need to
@@ -133,6 +136,94 @@ Before any request leaves the process, parameters are validated and a typed
 Booleans for `full_content`, `image`, `video`, and `removeduplicate` are
 coerced to `"1"`/`"0"`.
 
+## Real-time news (WebSocket)
+
+Register a query first — the returned `registration_id` identifies it from then on:
+
+```go
+resp, err := client.WebSocketRegister(ctx, newsdataapi.Params{
+    "q":        "bitcoin",
+    "language": "en",
+})
+agg, _ := resp.Aggregate()
+registrationID := agg["registration_id"].(string)
+```
+
+`WebSocketRegister` takes the familiar filter names (`q`, `country`, `language`,
+`domain`, …) — no date or paging filters, since a registered query matches news
+as it is published. Registering an identical query twice answers HTTP 409 with
+the existing id in the error's `ResponseBody`. `WebSocketFetch` lists every
+registered query and `WebSocketDelete` removes one.
+
+Then stream. Each response has the familiar `status` / `totalResults` /
+`results` shape:
+
+```go
+ws := newsdataapi.NewWebSocket(client)
+
+err = ws.Stream(ctx, registrationID, func(resp *newsdataapi.Response) error {
+    articles, err := resp.Articles()
+    if err != nil {
+        return err
+    }
+    for _, a := range articles {
+        fmt.Println(a.Title, "-", a.Link)
+    }
+    return nil
+})
+```
+
+`Stream` blocks until the context is cancelled or the handler returns an error.
+Return `newsdataapi.ErrStopStream` to stop cleanly — `Stream` then returns nil:
+
+```go
+err = ws.Stream(ctx, registrationID, func(resp *newsdataapi.Response) error {
+    fmt.Println(resp.TotalResults)
+    return newsdataapi.ErrStopStream
+})
+```
+
+Transient drops (network errors, server restarts, abnormal closes) are
+reconnected automatically with a capped exponential backoff. Pass
+`WithWSReconnect(false)` to stop on the first disconnect instead. A permanent
+rejection — bad API key or unknown
+`registration_id`, exhausted API credits, or too many simultaneous devices — returns
+`*NewsdataWebSocketAuthError` and is **not** retried.
+
+The server always accepts the handshake and then closes with code **1008** when
+the connection is refused, carrying one of three reasons: `invalid credentials
+or registration not found`, `api limit reached`, or `device limit reached` (more
+than 5 devices on one `registration_id`). Every other close code — including
+`1013` (`send timeout`, meaning the client read too slowly) — is transient and
+reconnects.
+
+**Each delivered article consumes 1 API credit per connected device.**
+
+Catch it like any other client error:
+
+```go
+var authErr *newsdataapi.NewsdataWebSocketAuthError
+if errors.As(err, &authErr) {
+    log.Fatalf("rejected: %v", err)
+}
+```
+
+All connection options are functional:
+
+```go
+ws := newsdataapi.NewWebSocket(client,
+    newsdataapi.WithWSBaseURL("wss://ws.newsdata.io/ws/event"), // staging / self-hosted
+    newsdataapi.WithWSReconnect(true),                          // default true
+    newsdataapi.WithWSReconnectDelay(time.Second, 30*time.Second), // first delay, cap
+    newsdataapi.WithWSHandshakeTimeout(10*time.Second),         // 0 disables
+    newsdataapi.WithWSKeepalive(20*time.Second, 20*time.Second),// ping interval, pong wait
+    newsdataapi.WithWSHeaders(http.Header{"X-Trace": {"abc"}}), // extra handshake headers
+    newsdataapi.WithWSProxy(http.ProxyFromEnvironment),         // proxy
+)
+```
+
+Runnable example: [`examples/websocket`](examples/websocket).
+
 ## Error handling
 
 All SDK errors satisfy the typed hierarchy and play nicely with `errors.As`
@@ -170,6 +261,8 @@ NewsdataAPIError                    (.StatusCode, .Message, .ResponseBody)
 ├── NewsdataRateLimitError          (429; .RetryAfter)
 └── NewsdataServerError             (5xx)
 NewsdataNetworkError                (.Err)
+NewsdataWebSocketError              (.Message, .Err — real-time stream)
+└── NewsdataWebSocketAuthError      (policy-violation close 1008)
 ```
 
 ## Configuration

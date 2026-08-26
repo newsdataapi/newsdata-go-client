@@ -105,14 +105,42 @@ func (e *NewsdataNetworkError) Error() string {
 
 func (e *NewsdataNetworkError) Unwrap() error { return e.Err }
 
+// NewsdataWebSocketError indicates a real-time stream failure (see WebSocket).
+type NewsdataWebSocketError struct {
+	Message string
+	Err     error
+}
+
+func (e *NewsdataWebSocketError) Error() string {
+	return "newsdataapi: websocket error: " + e.Message
+}
+
+func (e *NewsdataWebSocketError) Unwrap() error { return e.Err }
+
+// NewsdataWebSocketAuthError indicates the server rejected the connection —
+// bad API key, missing WebSocket entitlement, unknown registration_id, device
+// limit reached, or exhausted quota. It is never retried, regardless of the
+// reconnect setting.
+type NewsdataWebSocketAuthError struct {
+	*NewsdataWebSocketError
+}
+
+func (e *NewsdataWebSocketAuthError) Error() string {
+	return "newsdataapi: websocket rejected: " + e.Message
+}
+
+func (e *NewsdataWebSocketAuthError) Unwrap() error { return e.NewsdataWebSocketError }
+
 // Sentinel for callers that want a single error.Is check.
 var (
 	ErrValidation = errors.New("newsdataapi: validation error")
 	ErrAPI        = errors.New("newsdataapi: API error")
 	ErrNetwork    = errors.New("newsdataapi: network error")
+	ErrWebSocket  = errors.New("newsdataapi: websocket error")
 )
 
 // Is hooks so callers can use errors.Is(err, ErrValidation) etc.
 func (e *NewsdataValidationError) Is(target error) bool { return target == ErrValidation }
 func (e *NewsdataAPIError) Is(target error) bool        { return target == ErrAPI }
 func (e *NewsdataNetworkError) Is(target error) bool    { return target == ErrNetwork }
+func (e *NewsdataWebSocketError) Is(target error) bool  { return target == ErrWebSocket }
