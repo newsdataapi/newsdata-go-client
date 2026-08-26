@@ -24,6 +24,11 @@ const (
 	EndpointCount       = "count"
 	EndpointCryptoCount = "crypto_count"
 	EndpointMarketCount = "market_count"
+
+	// Real-time WebSocket query management.
+	EndpointWebSocketRegister = "websocket_register"
+	EndpointWebSocketFetch    = "websocket_fetch"
+	EndpointWebSocketDelete   = "websocket_delete"
 )
 
 // Client is the HTTP client for the Newsdata.io API. Construct with NewClient
@@ -86,14 +91,19 @@ func (c *Client) do(ctx context.Context, endpoint string, params Params) (*Respo
 	}
 	values.Set("apikey", c.apiKey)
 
+	method := http.MethodGet
+	if m, ok := endpointMethods[endpoint]; ok {
+		method = m
+	}
+
 	fullURL := c.baseURL + path + "?" + values.Encode()
 	logURL := redactAPIKey(fullURL)
 
 	var lastErr error
 	for attempt := 1; attempt <= c.maxRetries; attempt++ {
-		c.log("info", fmt.Sprintf("GET %s (attempt %d/%d)", logURL, attempt, c.maxRetries))
+		c.log("info", fmt.Sprintf("%s %s (attempt %d/%d)", method, logURL, attempt, c.maxRetries))
 
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, fullURL, nil)
+		req, err := http.NewRequestWithContext(ctx, method, fullURL, nil)
 		if err != nil {
 			return nil, &NewsdataNetworkError{Err: err}
 		}
@@ -158,7 +168,8 @@ func (c *Client) do(ctx context.Context, endpoint string, params Params) (*Respo
 			}
 		}
 
-		if status == http.StatusOK && parsed.Status == "success" && len(parsed.Results) > 0 {
+		if status == http.StatusOK && parsed.Status == "success" &&
+			(len(parsed.Results) > 0 || resultsOptional[endpoint]) {
 			if c.includeHeaders {
 				parsed.ResponseHeaders = resp.Header.Clone()
 			}
@@ -314,4 +325,3 @@ func extractErrorMessage(body []byte, status int) string {
 	}
 	return fmt.Sprintf("API request failed with HTTP %d", status)
 }
-
