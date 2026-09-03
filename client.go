@@ -181,7 +181,10 @@ func (c *Client) do(ctx context.Context, endpoint string, params Params) (*Respo
 
 		if status == 429 {
 			retryAfter := parseRetryAfter(resp.Header.Get("Retry-After"))
-			if attempt >= c.maxRetries {
+			// A 429 covers three cases: a burst limit, a rate limit, and
+			// exhausted API credits. Only the first two are worth retrying —
+			// waiting out the backoff cannot conjure more credits.
+			if quotaExhausted(body) || attempt >= c.maxRetries {
 				return nil, &NewsdataRateLimitError{
 					NewsdataAPIError: &NewsdataAPIError{
 						StatusCode: 429, Message: message, ResponseBody: body,
@@ -307,6 +310,20 @@ func redactAPIKey(rawURL string) string {
 
 // extractErrorMessage pulls a useful "what went wrong" string out of an API
 // error body. Falls back to a generic "HTTP <status>" message.
+// quotaExhausted reports whether a 429 body carries an error code meaning the
+// account is out of API credits, as opposed to a transient rate limit.
+func quotaExhausted(body []byte) bool {
+	var envelope struct {
+		Results struct {
+			Code string `json:"code"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return false
+	}
+	return quotaExhaustedCodes[envelope.Results.Code]
+}
+
 func extractErrorMessage(body []byte, status int) string {
 	var envelope struct {
 		Results struct {
