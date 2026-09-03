@@ -65,6 +65,14 @@ var endpointMethods = map[string]string{
 // check `do` applies to the news endpoints.
 var resultsOptional = setOf("websocket_register", "websocket_fetch", "websocket_delete")
 
+// Error codes on a 429 that mean the account's API credits are exhausted
+// rather than a transient rate limit. These are never retried.
+//
+// ApiLimitExceeded is the documented code (see the ErrorCode enum in
+// https://newsdata.io/openapi.json); ApiKeyLimitExceeded is accepted too
+// because the API has been observed to send it and the spec is not exhaustive.
+var quotaExhaustedCodes = setOf("ApiLimitExceeded", "ApiKeyLimitExceeded")
+
 // Endpoints that require both from_date and to_date.
 var requiresDateRange = setOf("count", "crypto_count", "market_count")
 

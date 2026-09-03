@@ -77,6 +77,62 @@ func TestMarketArticleDecodesSymbolAndMarketID(t *testing.T) {
 	}
 }
 
+// A 429 whose error code means exhausted credits is never retried: waiting out
+// the backoff cannot conjure more credits.
+func TestQuotaExhausted429NotRetried(t *testing.T) {
+	for _, code := range []string{"ApiLimitExceeded", "ApiKeyLimitExceeded"} {
+		t.Run(code, func(t *testing.T) {
+			var calls int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				atomic.AddInt32(&calls, 1)
+				w.WriteHeader(429)
+				_, _ = w.Write([]byte(`{"status":"error","results":{"message":"limit","code":"` + code + `"}}`))
+			}))
+			defer srv.Close()
+
+			c, err := NewClient("key", WithBaseURL(srv.URL), WithRetryBackoff(time.Millisecond), WithRetryBackoffMax(time.Millisecond))
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = c.Latest(context.Background(), Params{"q": "x"})
+
+			var rl *NewsdataRateLimitError
+			if !errors.As(err, &rl) {
+				t.Fatalf("error = %v (%T), want *NewsdataRateLimitError", err, err)
+			}
+			if n := atomic.LoadInt32(&calls); n != 1 {
+				t.Errorf("made %d requests, want 1 — exhausted quota must not retry", n)
+			}
+		})
+	}
+}
+
+// A 429 without a quota code is a transient rate limit and still retries.
+func TestTransient429StillRetries(t *testing.T) {
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if atomic.AddInt32(&calls, 1) == 1 {
+			w.WriteHeader(429)
+			_, _ = w.Write([]byte(`{"status":"error","results":{"message":"slow down","code":"RateLimitExceeded"}}`))
+			return
+		}
+		_, _ = w.Write([]byte(successBody(`[{"article_id":"1","title":"ok"}]`)))
+	}))
+	defer srv.Close()
+
+	c, _ := NewClient("key", WithBaseURL(srv.URL), WithRetryBackoff(time.Millisecond), WithRetryBackoffMax(time.Millisecond))
+	resp, err := c.Latest(context.Background(), Params{"q": "x"})
+	if err != nil {
+		t.Fatalf("expected the retry to succeed, got %v", err)
+	}
+	if arts, _ := resp.Articles(); len(arts) != 1 {
+		t.Errorf("expected 1 article after retry")
+	}
+	if n := atomic.LoadInt32(&calls); n != 2 {
+		t.Errorf("made %d requests, want 2", n)
+	}
+}
+
 func TestAuthError401(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(401)
