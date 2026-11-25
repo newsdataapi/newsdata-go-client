@@ -49,12 +49,61 @@ func (c *Client) MarketCount(ctx context.Context, params Params) (*Response, err
 	return c.do(ctx, EndpointMarketCount, params)
 }
 
-// WebSocketRegister registers a real-time query. POST /1/websocket/register.
+// ---- v2 endpoints ---------------------------------------------------------
 //
-// params takes the familiar filter names (q, country, language, domain, ...);
-// no date or paging filters apply, since a registered query matches news as it
-// is published. The new query's registration_id is in the response results —
-// pass it to WebSocket.Stream to receive the matching articles.
+// v2 renames the filter vocabulary to snake_case (q_in_title, exclude_country,
+// source_priority, content, remove_duplicate, ...) and folds
+// domain/domainurl/excludedomain/excludedomainurl into source_url /
+// exclude_source_url. Responses carry total_results / next_page, which
+// Response decodes into TotalResults / NextPage transparently.
+
+// NewsV2 fetches the latest news, or historical news when params carries
+// "from_date" / "to_date". GET /2/news.
+//
+// There is no /2/archive; this endpoint covers both.
+func (c *Client) NewsV2(ctx context.Context, params Params) (*Response, error) {
+	return c.do(ctx, EndpointNewsV2, params)
+}
+
+// MarketV2 fetches market / financial news. GET /2/market.
+func (c *Client) MarketV2(ctx context.Context, params Params) (*Response, error) {
+	return c.do(ctx, EndpointMarketV2, params)
+}
+
+// CryptoV2 fetches cryptocurrency news. GET /2/crypto.
+func (c *Client) CryptoV2(ctx context.Context, params Params) (*Response, error) {
+	return c.do(ctx, EndpointCryptoV2, params)
+}
+
+// SourcesV2 lists available news sources. GET /2/sources. Single-page
+// endpoint; ScrollAll and Paginate are not supported for this one.
+func (c *Client) SourcesV2(ctx context.Context, params Params) (*Response, error) {
+	return c.do(ctx, EndpointSourcesV2, params)
+}
+
+// CountNewsV2 fetches aggregate news counts. GET /2/count/news.
+func (c *Client) CountNewsV2(ctx context.Context, params Params) (*Response, error) {
+	return c.do(ctx, EndpointCountNewsV2, params)
+}
+
+// CountMarketV2 fetches aggregate market counts. GET /2/count/market.
+func (c *Client) CountMarketV2(ctx context.Context, params Params) (*Response, error) {
+	return c.do(ctx, EndpointCountMarketV2, params)
+}
+
+// CountCryptoV2 fetches aggregate crypto counts. GET /2/count/crypto.
+func (c *Client) CountCryptoV2(ctx context.Context, params Params) (*Response, error) {
+	return c.do(ctx, EndpointCountCryptoV2, params)
+}
+
+// WebSocketRegister registers a real-time query. POST /2/websocket/register.
+//
+// The real-time service is v2 only, so params takes the same filter names as
+// NewsV2 (q, q_in_title, country, exclude_country, source_url, content,
+// exclude_field, timezone, ...); the date, paging and sorting filters, id and
+// url do not apply to a standing query. The new query's registration_id is in
+// the response results — pass it to WebSocket.Stream to receive the matching
+// articles.
 //
 // Registering an identical query twice answers HTTP 409; the existing id is in
 // the NewsdataAPIError's ResponseBody.
@@ -68,13 +117,19 @@ func (c *Client) WebSocketRegister(ctx context.Context, params Params) (*Respons
 }
 
 // WebSocketFetch lists the account's registered real-time queries.
-// GET /1/websocket/fetch.
+// GET /2/websocket/fetch.
+//
+// Results is a JSON array with one entry per query, each carrying its
+// registration_id, the filters it was registered with (query), how many
+// devices are streaming it now (active_clients) and when one last connected
+// (last_used, UTC). Unmarshal Results into your own type — Articles() is for
+// the news endpoints.
 func (c *Client) WebSocketFetch(ctx context.Context) (*Response, error) {
 	return c.do(ctx, EndpointWebSocketFetch, nil)
 }
 
 // WebSocketDelete removes the registered real-time query identified by
-// registrationID. DELETE /1/websocket/delete.
+// registrationID. DELETE /2/websocket/delete.
 func (c *Client) WebSocketDelete(ctx context.Context, registrationID string) (*Response, error) {
 	if registrationID == "" {
 		return nil, &NewsdataValidationError{
@@ -94,7 +149,7 @@ func (c *Client) WebSocketDelete(ctx context.Context, registrationID string) (*R
 //
 // endpoint must be one of the Endpoint* constants. Sources is not supported.
 func (c *Client) ScrollAll(ctx context.Context, endpoint string, params Params, maxResults int) (*Response, error) {
-	if endpoint == EndpointSources {
+	if endpoint == EndpointSources || endpoint == EndpointSourcesV2 {
 		return nil, &NewsdataValidationError{
 			Message: "ScrollAll is not supported for the sources endpoint",
 		}
@@ -174,7 +229,7 @@ func (c *Client) Paginate(
 	params Params,
 	yield func(*Response, error) bool,
 ) error {
-	if endpoint == EndpointSources {
+	if endpoint == EndpointSources || endpoint == EndpointSourcesV2 {
 		return &NewsdataValidationError{
 			Message: "Paginate is not supported for the sources endpoint",
 		}

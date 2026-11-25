@@ -66,6 +66,96 @@ func main() {
 
 ## Endpoints
 
+The API has two versions. v2 is the current one; the v1 methods keep working
+unchanged.
+
+### v2
+
+| Method | Endpoint | Notes |
+|--------|----------|-------|
+| `client.NewsV2(ctx, params)` | `/2/news` | Latest news, or historical with `from_date` / `to_date` |
+| `client.MarketV2(ctx, params)` | `/2/market` | Market / financial news |
+| `client.CryptoV2(ctx, params)` | `/2/crypto` | Cryptocurrency news |
+| `client.SourcesV2(ctx, params)` | `/2/sources` | Available sources (single page) |
+| `client.CountNewsV2(ctx, params)` | `/2/count/news` | Aggregate news counts |
+| `client.CountMarketV2(ctx, params)` | `/2/count/market` | Aggregate market counts |
+| `client.CountCryptoV2(ctx, params)` | `/2/count/crypto` | Aggregate crypto counts |
+| `client.WebSocketRegister(ctx, params)` | `/2/websocket/register` | Register a real-time query |
+| `client.WebSocketFetch(ctx)` | `/2/websocket/fetch` | List registered queries |
+| `client.WebSocketDelete(ctx, id)` | `/2/websocket/delete` | Delete a registered query |
+
+v2 renames the filter vocabulary to snake_case and folds the four domain
+filters into two:
+
+| v1 | v2 |
+|----|----|
+| `qInTitle`, `qInMeta` | `q_in_title`, `q_in_meta` |
+| `excludecountry`, `excludecategory`, `excludelanguage` | `exclude_country`, `exclude_category`, `exclude_language` |
+| `domain`, `domainurl`, `excludedomain`, `excludedomainurl` | `source_url`, `exclude_source_url` |
+| `prioritydomain` | `source_priority` |
+| `full_content` | `content` |
+| `removeduplicate`, `excludefield` | `remove_duplicate`, `exclude_field` |
+
+`coin` and `market_id` keep their names.
+
+```go
+resp, err := client.NewsV2(ctx, newsdataapi.Params{
+    "q_in_title": "tesla",
+    "source_url": "bbc.com",
+    "content":    true,
+})
+```
+
+The v2 envelope spells its total and cursor `total_results` / `next_page`
+where v1 spells them `totalResults` / `nextPage`. `Response` decodes either
+into `TotalResults` / `NextPage`, so `ScrollAll`, `Paginate` and your own code
+read the same fields whichever version answered.
+
+There is no `/2/archive` — `NewsV2` covers historical news through
+`from_date` / `to_date`.
+
+#### v2 articles
+
+v2 renamed and regrouped the article fields, so the v2 endpoints and the
+real-time stream decode with `ArticlesV2()` and `ArticleV2`, while the v1
+endpoints keep `Articles()` and `Article`:
+
+```go
+resp, _ := client.NewsV2(ctx, newsdataapi.Params{"q": "bitcoin"})
+
+articles, err := resp.ArticlesV2()
+if err != nil {
+    log.Fatal(err)
+}
+for _, a := range articles {
+    fmt.Println(a.Title, a.URL, a.PublishedAt)
+    fmt.Println(a.Source.Name, a.Source.Priority.Int())
+    fmt.Println(a.Media.ImageURL)
+    fmt.Println(a.AI.Summary, a.AI.Sentiment.Label, a.AI.Tag)
+}
+```
+
+| v1 (`Article`) | v2 (`ArticleV2`) |
+|----------------|------------------|
+| `ArticleID` | `ID` |
+| `Link` | `URL` |
+| `PubDate` | `PublishedAt` |
+| `Description` | `MetaDescription` |
+| `Keywords` | `Keyword` |
+| `Symbol` | `Ticker` |
+| `SourceName`, `SourceURL`, `SourcePriority`, `SourceIcon` | `Source.Name`, `Source.URL`, `Source.Priority`, `Source.IconURL` |
+| `ImageURL`, `VideoURL` | `Media.ImageURL`, `Media.VideoURL` |
+| `Sentiment`, `SentimentStats` | `AI.Sentiment.Label`, `AI.Sentiment.Score` |
+| `AITag`, `AIRegion`, `AIOrg` | `AI.Tag`, `AI.Region`, `AI.Organization` |
+| — | `AI.Summary`, `FetchedAt`, `Duplicate`, `Coin`, `MarketID` |
+
+A field your plan does not include arrives as the API's notice string in place
+of the data (`"ONLY AVAILABLE IN PAID PLANS"`). Decoding tolerates it — a list
+field holds the single notice — and `newsdataapi.IsPlanNotice(value)` tells it
+apart from real data.
+
+### v1
+
 | Method | Endpoint | Notes |
 |--------|----------|-------|
 | `client.Latest(ctx, params)` | `/1/latest` | Real-time news |
@@ -76,9 +166,8 @@ func main() {
 | `client.Count(ctx, params)` | `/1/count` | Aggregate counts (requires `from_date`, `to_date`) |
 | `client.CryptoCount(ctx, params)` | `/1/crypto/count` | Aggregate crypto counts |
 | `client.MarketCount(ctx, params)` | `/1/market/count` | Aggregate market counts |
-| `client.WebSocketRegister(ctx, params)` | `/1/websocket/register` | Register a real-time query |
-| `client.WebSocketFetch(ctx)` | `/1/websocket/fetch` | List registered queries |
-| `client.WebSocketDelete(ctx, id)` | `/1/websocket/delete` | Delete a registered query |
+
+The real-time service is v2 only — there are no v1 WebSocket methods.
 
 Every value in `Params` may be a `string`, a `[]string` (sent comma-joined),
 a `bool`, an `int`, a `float64`, or `*bool` / `*float64` if you need to
@@ -138,7 +227,8 @@ coerced to `"1"`/`"0"`.
 
 ## Real-time news (WebSocket)
 
-Register a query first — the returned `registration_id` identifies it from then on:
+The real-time service is part of API v2. Register a query first — the returned
+`registration_id` identifies it from then on:
 
 ```go
 resp, err := client.WebSocketRegister(ctx, newsdataapi.Params{
@@ -149,25 +239,35 @@ agg, _ := resp.Aggregate()
 registrationID := agg["registration_id"].(string)
 ```
 
-`WebSocketRegister` takes the familiar filter names (`q`, `country`, `language`,
-`domain`, …) — no date or paging filters, since a registered query matches news
-as it is published. Registering an identical query twice answers HTTP 409 with
-the existing id in the error's `ResponseBody`. `WebSocketFetch` lists every
-registered query and `WebSocketDelete` removes one.
+`WebSocketRegister` takes the same filter names as `NewsV2` (`q`, `q_in_title`,
+`country`, `exclude_country`, `source_url`, `content`, `exclude_field`,
+`timezone`, …) — the date, paging and sorting filters, `id` and `url` don't
+apply to a standing query. Registering an identical query twice answers HTTP
+409 with the existing id in the error's `ResponseBody`.
 
-Then stream. Each response has the familiar `status` / `totalResults` /
-`results` shape:
+`WebSocketFetch` lists every registered query: `Results` is a JSON array with
+one entry per query, carrying its `registration_id`, the filters it was
+registered with (`query`), how many devices are streaming it now
+(`active_clients`) and when one last connected (`last_used`, UTC) — unmarshal
+it into your own type. `WebSocketDelete` removes one. Once every registration
+the plan allows is in use, registering another returns a 429
+`NewsdataRateLimitError` carrying the code `RegistrationLimitExceeded`; it is
+not retried, since only deleting a registration frees a slot.
+
+Then stream. Each response carries `status`, `total_results` and `results` —
+decoded into `Status`, `TotalResults` and `Results` — and its articles use the
+v2 layout, so decode them with `ArticlesV2()`:
 
 ```go
 ws := newsdataapi.NewWebSocket(client)
 
 err = ws.Stream(ctx, registrationID, func(resp *newsdataapi.Response) error {
-    articles, err := resp.Articles()
+    articles, err := resp.ArticlesV2()
     if err != nil {
         return err
     }
     for _, a := range articles {
-        fmt.Println(a.Title, "-", a.Link)
+        fmt.Println(a.Title, "-", a.URL, a.Source.Name)
     }
     return nil
 })
@@ -259,6 +359,10 @@ NewsdataValidationError             (.Param, .Message)
 NewsdataAPIError                    (.StatusCode, .Message, .ResponseBody)
 ├── NewsdataAuthError               (401 / 403)
 ├── NewsdataRateLimitError          (429; .RetryAfter)
+│   ├── NewsdataAPILimitExceededError     (account credits gone)
+│   └── NewsdataAPIKeyLimitExceededError  (this key's cap gone)
+│   (RegistrationLimitExceeded stays on NewsdataRateLimitError —
+│    real-time registration slots, not credits)
 └── NewsdataServerError             (5xx)
 NewsdataNetworkError                (.Err)
 NewsdataWebSocketError              (.Message, .Err — real-time stream)
@@ -274,16 +378,27 @@ client, err := newsdataapi.NewClient(apiKey,
     newsdataapi.WithRetryBackoff(2 * time.Second),     // base, exponential
     newsdataapi.WithRetryBackoffMax(60 * time.Second), // cap on a single sleep
     newsdataapi.WithPaginationDelay(time.Second),
-    newsdataapi.WithBaseURL("https://staging.example/api/1/"),
+    newsdataapi.WithBaseURL("https://staging.example/api"), // root, no version
     newsdataapi.WithHTTPClient(myCustomClient),        // proxies / mTLS
     newsdataapi.WithIncludeHeaders(true),              // attach Response.ResponseHeaders
     newsdataapi.WithLogger(myLogger),                  // any Info(msg)/Warn(msg) value
 )
 ```
 
+`WithBaseURL` takes the API root **without** a version segment; the default is
+`https://newsdata.io/api` and the client adds `/1/…` or `/2/…` itself. Before
+v0.3.0 it included the version, so drop the trailing `/1/` if you override it.
+
 Retries cover network errors, HTTP 429, and 5xx responses. 429 honours the
 `Retry-After` header (integer seconds or HTTP-date); otherwise the wait is
-exponential. Auth and other 4xx errors are never retried. **`context.Context`
+exponential. Auth and other 4xx errors are never retried. A 429 that waiting
+cannot fix is never retried: `NewsdataAPILimitExceededError` means the
+account's whole credit pool is exhausted, `NewsdataAPIKeyLimitExceededError`
+means this one key hit its own cap, and both unwrap to
+`NewsdataRateLimitError`, so an existing `errors.As(err, &rl)` keeps working.
+`RegistrationLimitExceeded` is also never retried, but keeps the plain
+`NewsdataRateLimitError` — it is about real-time registration slots, not
+credits, and is fixed by deleting a registration. **`context.Context`
 cancellation interrupts retries immediately** — passing a cancelled or
 deadlined context returns a `NewsdataNetworkError` wrapping `context.Canceled`
 or `context.DeadlineExceeded`.

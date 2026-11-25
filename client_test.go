@@ -80,7 +80,9 @@ func TestMarketArticleDecodesSymbolAndMarketID(t *testing.T) {
 // A 429 whose error code means exhausted credits is never retried: waiting out
 // the backoff cannot conjure more credits.
 func TestQuotaExhausted429NotRetried(t *testing.T) {
-	for _, code := range []string{"ApiLimitExceeded", "ApiKeyLimitExceeded"} {
+	for _, code := range []string{
+		"ApiLimitExceeded", "ApiKeyLimitExceeded", "RegistrationLimitExceeded",
+	} {
 		t.Run(code, func(t *testing.T) {
 			var calls int32
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

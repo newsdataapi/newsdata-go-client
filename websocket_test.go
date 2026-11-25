@@ -45,9 +45,9 @@ func wsTestClient(t *testing.T) *Client {
 func TestWebSocketStreamsResponses(t *testing.T) {
 	url, stop := wsServer(t, func(conn *websocket.Conn, _ *http.Request) {
 		_ = conn.WriteMessage(websocket.TextMessage,
-			[]byte(`{"status":"success","totalResults":1,"results":[{"article_id":"a1","title":"one"}]}`))
+			[]byte(`{"status":"success","total_results":1,"results":[{"id":"a1","title":"one"}]}`))
 		_ = conn.WriteMessage(websocket.TextMessage,
-			[]byte(`{"status":"success","totalResults":1,"results":[{"article_id":"a2","title":"two"}]}`))
+			[]byte(`{"status":"success","total_results":1,"results":[{"id":"a2","title":"two"}]}`))
 	})
 	defer stop()
 
@@ -300,8 +300,8 @@ func TestWebSocketRegisterPostsWithNewsType(t *testing.T) {
 	if method != http.MethodPost {
 		t.Errorf("method = %s, want POST", method)
 	}
-	if !strings.Contains(query, "news_type=latest") {
-		t.Errorf("query %q should carry news_type=latest", query)
+	if !strings.Contains(query, "news_type=news") {
+		t.Errorf("query %q should carry news_type=news", query)
 	}
 	if !strings.Contains(query, "q=bitcoin") {
 		t.Errorf("query %q should carry the filter", query)
@@ -336,7 +336,7 @@ func TestWebSocketFetchUsesGet(t *testing.T) {
 	var method, path string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		method, path = r.Method, r.URL.Path
-		_, _ = w.Write([]byte(`{"status":"success","results":{"queries":[]}}`))
+		_, _ = w.Write([]byte(`{"status":"success","total_results":0,"results":[]}`))
 	}))
 	defer srv.Close()
 
@@ -390,5 +390,118 @@ func TestWebSocketManagementAcceptsResultlessSuccess(t *testing.T) {
 	c, _ := NewClient("key", WithBaseURL(srv.URL))
 	if _, err := c.WebSocketDelete(context.Background(), "reg-9"); err != nil {
 		t.Errorf("resultless success should not error, got %v", err)
+	}
+}
+
+// ---- API version 2 -------------------------------------------------------
+// The real-time service moved to API version 2: the management endpoints sit
+// under /2/, news_type names the v2 news feed, and a registration takes the v2
+// filter vocabulary only.
+
+func TestWebSocketEndpointsAreUnderAPIVersion2(t *testing.T) {
+	for key, want := range map[string]string{
+		"websocket_register": "2/websocket/register",
+		"websocket_fetch":    "2/websocket/fetch",
+		"websocket_delete":   "2/websocket/delete",
+	} {
+		if got := endpoints[key]; got != want {
+			t.Errorf("endpoints[%q] = %q, want %q", key, got, want)
+		}
+	}
+}
+
+func TestWSNewsTypeNamesTheV2NewsFeed(t *testing.T) {
+	if wsNewsType != "news" {
+		t.Errorf("wsNewsType = %q, want news", wsNewsType)
+	}
+}
+
+func TestWebSocketRegisterTakesTheV2FilterNames(t *testing.T) {
+	set := filters["websocket_register"]
+	for _, name := range []string{
+		"q_in_title", "q_in_meta", "exclude_country", "exclude_category",
+		"exclude_language", "source_url", "exclude_source_url",
+		"source_priority", "content", "remove_duplicate", "exclude_field",
+	} {
+		if !set[name] {
+			t.Errorf("websocket_register should accept %s", name)
+		}
+	}
+	for _, name := range []string{
+		"qintitle", "qinmeta", "excludecountry", "excludecategory",
+		"excludelanguage", "domain", "domainurl", "excludedomain",
+		"excludedomainurl", "prioritydomain", "full_content",
+		"removeduplicate", "excludefield",
+	} {
+		if set[name] {
+			t.Errorf("websocket_register should no longer accept %s", name)
+		}
+	}
+	// Still no date or paging filters on a standing query.
+	for _, name := range []string{"from_date", "to_date", "page", "size", "sort"} {
+		if set[name] {
+			t.Errorf("websocket_register should not accept %s", name)
+		}
+	}
+}
+
+func TestWebSocketRegisterRejectsAV1FilterName(t *testing.T) {
+	c, err := NewClient("key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = c.WebSocketRegister(context.Background(), Params{"qintitle": "pizza"})
+	var ve *NewsdataValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("error = %v (%T), want *NewsdataValidationError", err, err)
+	}
+}
+
+func TestWebSocketRegisterKeepsTheV2SourceURLMutexGroup(t *testing.T) {
+	c, err := NewClient("key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = c.WebSocketRegister(context.Background(), Params{
+		"source_url":         "a.com",
+		"exclude_source_url": "b.com",
+	})
+	var ve *NewsdataValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("error = %v (%T), want *NewsdataValidationError", err, err)
+	}
+}
+
+// RegistrationLimitExceeded means every registration slot the plan allows is
+// in use. It is never retried, but keeps the base error: it is about slots,
+// not credits, so there is no dedicated type.
+func TestRegistrationLimitExceededKeepsTheBaseError(t *testing.T) {
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(
+			`{"status":"error","results":{"message":"limit","code":"RegistrationLimitExceeded"}}`))
+	}))
+	defer srv.Close()
+
+	c, err := NewClient("key", WithBaseURL(srv.URL), WithMaxRetries(5),
+		WithRetryBackoff(time.Millisecond), WithRetryBackoffMax(time.Millisecond))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = c.WebSocketRegister(context.Background(), Params{"q": "x"})
+
+	var rl *NewsdataRateLimitError
+	if !errors.As(err, &rl) {
+		t.Fatalf("error = %v (%T), want *NewsdataRateLimitError", err, err)
+	}
+	var apiLimit *NewsdataAPILimitExceededError
+	var keyLimit *NewsdataAPIKeyLimitExceededError
+	if errors.As(err, &apiLimit) || errors.As(err, &keyLimit) {
+		t.Errorf("error = %T, want the plain rate-limit error", err)
+	}
+	if calls != 1 {
+		t.Errorf("made %d requests, want 1 — a full registration set must not retry", calls)
 	}
 }

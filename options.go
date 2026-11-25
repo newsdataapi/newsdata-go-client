@@ -16,8 +16,10 @@ type Logger interface {
 // Option configures a Client at construction time.
 type Option func(*Client) error
 
-// WithBaseURL overrides the API base URL (useful for staging / a proxy).
-// The trailing slash is added if missing.
+// WithBaseURL overrides the API root (useful for staging / a proxy). This is
+// the root *without* a version segment — the endpoint paths carry the version,
+// so pass "https://example.com/api", not ".../api/1". The trailing slash is
+// added if missing.
 func WithBaseURL(u string) Option {
 	return func(c *Client) error {
 		if u == "" {

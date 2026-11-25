@@ -84,6 +84,34 @@ func (e *NewsdataRateLimitError) Error() string {
 
 func (e *NewsdataRateLimitError) Unwrap() error { return e.NewsdataAPIError }
 
+// NewsdataAPILimitExceededError is raised on 429 when the account's pool of
+// API credits is exhausted, rather than a transient rate limit having been
+// hit. Never retried — waiting out the backoff cannot conjure more credits.
+type NewsdataAPILimitExceededError struct {
+	*NewsdataRateLimitError
+}
+
+func (e *NewsdataAPILimitExceededError) Error() string {
+	return "newsdataapi: API credits exhausted: " + e.Message
+}
+
+// Unwrap allows `errors.As` to also match NewsdataRateLimitError on this type.
+func (e *NewsdataAPILimitExceededError) Unwrap() error { return e.NewsdataRateLimitError }
+
+// NewsdataAPIKeyLimitExceededError is raised on 429 when this specific API
+// key's own credit cap is exhausted, even though the account's overall pool
+// may still have credits left. Never retried.
+type NewsdataAPIKeyLimitExceededError struct {
+	*NewsdataRateLimitError
+}
+
+func (e *NewsdataAPIKeyLimitExceededError) Error() string {
+	return "newsdataapi: API key credit limit exhausted: " + e.Message
+}
+
+// Unwrap allows `errors.As` to also match NewsdataRateLimitError on this type.
+func (e *NewsdataAPIKeyLimitExceededError) Unwrap() error { return e.NewsdataRateLimitError }
+
 // NewsdataServerError is raised on 5xx responses once retries are exhausted.
 type NewsdataServerError struct{ *NewsdataAPIError }
 

@@ -14,14 +14,21 @@ import (
 
 // WebSocket streams the news matching a registered real-time query.
 //
+// The real-time service is part of API v2, so registrations take the v2 filter
+// names and responses carry the v2 envelope and article layout.
+//
 // Register the query first with Client.WebSocketRegister (or list existing
-// ones with Client.WebSocketFetch), then pass its registration_id to Stream:
+// ones with Client.WebSocketFetch), then pass its registration_id to Stream.
+// Streamed articles use the v2 layout, so decode them with ArticlesV2:
 //
 //	ws := newsdataapi.NewWebSocket(client)
 //	err := ws.Stream(ctx, registrationID, func(resp *newsdataapi.Response) error {
-//		articles, _ := resp.Articles()
+//		articles, err := resp.ArticlesV2()
+//		if err != nil {
+//			return err
+//		}
 //		for _, a := range articles {
-//			fmt.Println(a.Title)
+//			fmt.Println(a.Title, "-", a.URL, a.Source.Name)
 //		}
 //		return nil
 //	})
@@ -206,7 +213,8 @@ func transientError(err error, resp *http.Response) *NewsdataWebSocketError {
 }
 
 // Stream connects and calls fn with each response as it arrives. Responses
-// have the familiar status / totalResults / results shape.
+// carry status, total_results and results — decoded into Status, TotalResults
+// and Results — and their articles use the v2 layout.
 //
 // Stream blocks until ctx is cancelled, fn returns an error, or — with
 // reconnect disabled — the connection drops. Cancelling ctx returns

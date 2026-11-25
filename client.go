@@ -25,6 +25,17 @@ const (
 	EndpointCryptoCount = "crypto_count"
 	EndpointMarketCount = "market_count"
 
+	// v2. The filter vocabulary is snake_case and source_url /
+	// exclude_source_url replace the four domain filters; responses carry
+	// total_results / next_page, which Response decodes transparently.
+	EndpointNewsV2        = "news_v2"
+	EndpointMarketV2      = "market_v2"
+	EndpointCryptoV2      = "crypto_v2"
+	EndpointSourcesV2     = "sources_v2"
+	EndpointCountNewsV2   = "count_news_v2"
+	EndpointCountMarketV2 = "count_market_v2"
+	EndpointCountCryptoV2 = "count_crypto_v2"
+
 	// Real-time WebSocket query management.
 	EndpointWebSocketRegister = "websocket_register"
 	EndpointWebSocketFetch    = "websocket_fetch"
@@ -181,16 +192,24 @@ func (c *Client) do(ctx context.Context, endpoint string, params Params) (*Respo
 
 		if status == 429 {
 			retryAfter := parseRetryAfter(resp.Header.Get("Retry-After"))
+			if remaining := resp.Header.Get("X-APIKEY-Limit-Remaining"); remaining != "" {
+				c.log("warn", "X-APIKEY-Limit-Remaining: "+remaining)
+			}
 			// A 429 covers three cases: a burst limit, a rate limit, and
 			// exhausted API credits. Only the first two are worth retrying —
 			// waiting out the backoff cannot conjure more credits.
-			if quotaExhausted(body) || attempt >= c.maxRetries {
-				return nil, &NewsdataRateLimitError{
+			quotaError := quotaExhaustedError(body)
+			if quotaError != nil || attempt >= c.maxRetries {
+				rateLimitErr := &NewsdataRateLimitError{
 					NewsdataAPIError: &NewsdataAPIError{
 						StatusCode: 429, Message: message, ResponseBody: body,
 					},
 					RetryAfter: retryAfter,
 				}
+				if quotaError != nil {
+					return nil, quotaError(rateLimitErr)
+				}
+				return nil, rateLimitErr
 			}
 			wait := time.Duration(retryAfter) * time.Second
 			if wait <= 0 {
@@ -312,16 +331,22 @@ func redactAPIKey(rawURL string) string {
 // error body. Falls back to a generic "HTTP <status>" message.
 // quotaExhausted reports whether a 429 body carries an error code meaning the
 // account is out of API credits, as opposed to a transient rate limit.
-func quotaExhausted(body []byte) bool {
+// quotaExhaustedError returns a constructor for the error a 429 whose body
+// says the API credits are exhausted should become, or nil when the 429 is a
+// transient rate limit worth retrying.
+func quotaExhaustedError(body []byte) func(*NewsdataRateLimitError) error {
 	var envelope struct {
 		Results struct {
 			Code string `json:"code"`
 		} `json:"results"`
 	}
 	if err := json.Unmarshal(body, &envelope); err != nil {
-		return false
+		return nil
 	}
-	return quotaExhaustedCodes[envelope.Results.Code]
+	if !quotaExhaustedCodes[envelope.Results.Code] {
+		return nil
+	}
+	return quotaExhaustedErrors[envelope.Results.Code]
 }
 
 func extractErrorMessage(body []byte, status int) string {

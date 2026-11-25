@@ -47,12 +47,14 @@ func main() {
 
 	ws := newsdataapi.NewWebSocket(client)
 	err = ws.Stream(ctx, registrationID, func(resp *newsdataapi.Response) error {
-		articles, err := resp.Articles()
+		// The real-time feed is API v2, whose articles carry `url` and
+		// `published_at` and group the source, media and AI fields.
+		articles, err := resp.ArticlesV2()
 		if err != nil {
 			return err
 		}
 		for _, a := range articles {
-			fmt.Printf("%s - %s\n", a.Title, a.Link)
+			fmt.Printf("%s - %s (%s)\n", a.Title, a.URL, a.Source.Name)
 		}
 		return nil
 	})
