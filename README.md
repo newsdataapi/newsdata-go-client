@@ -38,7 +38,6 @@ import (
     "fmt"
     "log"
     "os"
-
     "github.com/newsdataapi/newsdata-go-client"
 )
 
